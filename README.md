@@ -9,7 +9,7 @@ $ sudo apt-get install nginx
 $ sudo vim /etc/nginx/sites-enabled/default
 location = /userpage-auth {
     internal;
-    proxy_pass http://gunicorn;
+    proxy_pass http://gunicorn/auth;
     proxy_pass_request_body off;
     proxy_set_header Content-Length "";
     proxy_set_header X-Original-URI $request_uri;
