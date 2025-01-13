@@ -14,18 +14,18 @@ location = /userpage-auth {
     proxy_set_header Content-Length "";
     proxy_set_header X-Original-URI $request_uri;
 }
-location ~ ^/~([0-9a-zA-Z_-]+)\.git/(HEAD|info/refs|objects/(info/[^/]+|[0-9a-f]+/[0-9a-f]+|pack/pack-[0-9a-f]+\.(pack|idx))|git-(upload|receive)-pack)$ {
+location ~ ^/~([^/]+)/\.git/(HEAD|info/refs|objects/(info/[^/]+|[0-9a-f]+/[0-9a-f]+|pack/pack-[0-9a-f]+\.(pack|idx))|git-(upload|receive)-pack)$ {
     auth_request /userpage-auth;
     proxy_pass http://gitd:80/userpage/$1/$2$is_args$args;
-    proxy_redirect http://gitd:80/userpage/$1 /~$1.git;
+    proxy_redirect http://gitd:80/userpage/$1 /~$1/.git;
     proxy_set_header Authorization "Basic GITDAUTHBASE64";
 }
-location ~ ^/~([0-9a-zA-Z_-]+)\.git/(.*)$ {
+location ~ ^/~([^/]+)/\.git/(.*)$ {
     auth_request /userpage-auth;
     proxy_pass http://gitd:80/userpage/$1/$2$is_args$args;
-    proxy_redirect http://gitd:80/userpage/$1 /~$1.git;
+    proxy_redirect http://gitd:80/userpage/$1 /~$1/.git;
     proxy_set_header Authorization "Basic GITDAUTHBASE64";
-    sub_filter "/GITD_CGIT_VIRTUAL_ROOT_zT0Ohfr3SNbdeP4c/userpage/$1/" "/~$1.git/";
+    sub_filter "/GITD_CGIT_VIRTUAL_ROOT_zT0Ohfr3SNbdeP4c/userpage/$1/" "/~$1/.git/";
     sub_filter_last_modified on;
     sub_filter_once off;
 }

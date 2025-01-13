@@ -187,7 +187,7 @@ def logout():
 @app.route('/auth')
 def auth():
     uri = request.headers['x-original-uri']
-    uri_regex = re.compile(r'^/~([a-zA-Z0-9_-]+)\.git/(.*)$')
+    uri_regex = re.compile(r'^/~([^/]+)/\.git/(.*)$')
     match = uri_regex.match(uri)
     if not match:
         abort(FORBIDDEN)
