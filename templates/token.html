@@ -1,0 +1,9 @@
+{% extends "layout.html" %}
+{% block body %}
+<div><a href="{{ url_for('homepage') }}">(- 回首页)</a></div>
+<h1>获取/重置密钥</h1>
+<p>点击下方按钮以显示您的密钥。获取新密钥后，之前的密钥将无法使用。</p>
+<form action="{{ url_for('do_set_token') }}" method="POST">
+  <button>获取/重置密钥</button>
+</form>
+{% endblock %}

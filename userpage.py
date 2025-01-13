@@ -1,27 +1,19 @@
 #!/usr/bin/env python3
 
-import os
 import functools
+import os
+import re
 import sqlite3
-import subprocess
+from base64 import b32encode
+from http.client import FORBIDDEN, INTERNAL_SERVER_ERROR, UNAUTHORIZED
+
 import requests
+from flask import (Flask, abort, flash, g, make_response, redirect,
+                   render_template, request, session, url_for)
 from requests_oauthlib import OAuth2Session
-from flask import Flask, request, redirect, url_for, flash, render_template, abort, Response, g, make_response, jsonify, session
+
 from config import *
-
-
-def setup_user(username, keys):
-    script_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'setup_user.bash')
-    p = subprocess.Popen(['sudo', script_path, username],
-                         stdin=subprocess.PIPE,
-                         stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE,
-                         universal_newlines=True)
-    out, err = p.communicate(keys)
-    if p.returncode != 0:
-        return 'STDOUT: \n{}\nSTDERR: {}\n'.format(out, err)
-    return None
-
+from migrate import is_up_to_date
 
 app = Flask(__name__, static_url_path=WEBROOT + '/static')
 app.secret_key = FLASK_SECRET_KEY
@@ -31,20 +23,15 @@ def get_db():
     db = getattr(g, '_database', None)
     if db is None:
         conn = sqlite3.connect(DB_NAME)
-        conn.executescript('''
-        CREATE TABLE IF NOT EXISTS keys (
-            jaccount TEXT UNIQUE,
-            stuid TEXT UNIQUE,
-            keys TEXT
-        );
-        CREATE TABLE IF NOT EXISTS members (
-            stuid TEXT UNIQUE,
-            name TEXT
-        );
-        ''')
+        if not is_up_to_date(conn):
+            abort(INTERNAL_SERVER_ERROR, 'Database migration needed')
         conn.row_factory = sqlite3.Row
         db = g._database = conn
     return db
+
+
+def generate_token():
+    return b32encode(os.urandom(10)).decode().lower()
 
 
 def login_required(f):
@@ -67,81 +54,83 @@ def logout_required(f):
     return decorated_function
 
 
-@app.route(WEBROOT)
+@app.get(WEBROOT)
 def homepage():
     user = session.get('user', None)
 
     cur = get_db().cursor()
-    sql = '''SELECT keys.jaccount AS jaccount, members.stuid AS stuid, members.name AS name
-    FROM keys, members
-    WHERE keys.stuid = members.stuid
+    sql = '''SELECT sites.slug AS slug, members.stuid AS stuid, members.name AS name
+    FROM sites, members
+    WHERE sites.stuid = members.stuid
     ORDER BY members.stuid DESC'''
     cur.execute(sql)
     known_users = cur.fetchall()
-    return render_template('homepage.html', user=user, known_users=known_users)
+    stuid = user['stuid'] if user is not None else None
+    user_slug = [x['slug'] for x in known_users if x['stuid'] == stuid]
+    user_slug = None if len(user_slug) == 0 else user_slug[0]
+
+    return render_template('homepage.html', user=user, user_slug=user_slug, known_users=known_users)
 
 
-@app.route(WEBROOT + '/help')
+@app.get(WEBROOT + '/help')
 def help():
     return render_template('help.html')
 
 
-@app.route(WEBROOT + '/ssh-key')
+@app.get(WEBROOT + '/token')
 @login_required
-def get_ssh_key():
+def set_token():
+    return render_template('token.html')
+
+@app.post(WEBROOT + '/token')
+@login_required
+def do_set_token():
     jaccount = session['user']['jaccount']
     stuid = session['user']['stuid']
 
+    token = generate_token()
     cur = get_db().cursor()
-    cur.execute('SELECT * FROM members WHERE stuid=?', (stuid, ))
-    row = cur.fetchone()
-    if not row:
-        flash('您不是ACM班的成员', 'error')
-        return redirect(url_for('homepage'))
-
-    cur.execute('SELECT keys FROM keys WHERE jaccount=?', (jaccount,))
-    row = cur.fetchone()
-    keys = row['keys'] if row else ''
-    return render_template('ssh_key.html', user=session['user'], keys=keys)
-
-
-@app.route(WEBROOT + '/save-ssh-key', methods=['POST'])
-@login_required
-def save_ssh_key():
-    jaccount = session['user']['jaccount']
-    stuid = session['user']['stuid']
-    keys = request.form.get('keys', '')
-
-    cur = get_db().cursor()
-    cur.execute('SELECT * FROM members WHERE stuid=?', (stuid, ))
-    row = cur.fetchone()
-    if not row:
-        flash('您不是ACM班的成员', 'error')
-        return redirect(url_for('homepage'))
-
-    cur = get_db().cursor()
-    cur.execute('DELETE FROM keys WHERE jaccount=?', (jaccount,))
-    cur.execute('INSERT INTO keys (jaccount, stuid, keys) VALUES (?, ?, ?)', (jaccount, stuid, keys))
+    cur.execute('INSERT OR IGNORE INTO sites (jaccount, stuid, slug, token) VALUES (?, ?, ?, ?)', (jaccount, stuid, jaccount, token))
+    cur.execute('UPDATE sites SET token = ? WHERE jaccount = ? AND stuid = ?', (token, jaccount, stuid))
+    slug = cur.execute('SELECT slug FROM sites WHERE jaccount = ?', (jaccount, )).fetchone()[0]
     get_db().commit()
 
-    err = setup_user(jaccount, keys)
-    if err:
-        flash('<pre>' + err + '</pre>', 'error')
-    else:
-        flash('保存成功', 'success')
+    resp = requests.post(GITD_API_URL + '/repo', data={ 'path': 'userpage/' + slug, 'max_size_bytes': 100 * 1048576, 'serve': 'true' })
+    if resp.status_code > 299:
+        print('Error creating git repo: ' + resp.text)
+        flash(f'创建 Git repo 失败 ({resp.status_code})', 'error')
 
-    return redirect(url_for('get_ssh_key'))
+    return render_template('token_result.html', jaccount=jaccount, slug=slug, token=token)
+
+@app.get(WEBROOT + '/repo/reset')
+@login_required
+def reset_repo():
+    return render_template('reset_repo.html')
+
+@app.post(WEBROOT + '/repo/reset')
+@login_required
+def do_reset_repo():
+    jaccount = session['user']['jaccount']
+    slug = get_db().execute('SELECT slug FROM sites WHERE jaccount = ?', (jaccount, )).fetchone()[0]
+
+    resp = requests.delete(GITD_API_URL + '/repo', data={ 'path': 'userpage/' + slug })
+    if resp.status_code > 299:
+        print('Error deleting git repo: ' + resp.text)
+        flash(f'删除 Git repo 失败 ({resp.status_code})', 'error')
+        return redirect(url_for('reset_repo'))
+    resp = requests.post(GITD_API_URL + '/repo', data={ 'path': 'userpage/' + slug, 'max_size_bytes': 100 * 1048576, 'serve': 'true' })
+    if resp.status_code > 299:
+        print('Error creating git repo: ' + resp.text)
+        flash(f'创建 Git repo 失败 ({resp.status_code})', 'error')
+        return redirect(url_for('reset_repo'))
+
+    flash('已重建 Git 仓库')
+    return redirect(url_for('homepage'))
 
 
-@app.route(WEBROOT + '/login')
+@app.get(WEBROOT + '/login')
 @logout_required
 def login():
-    return render_template('login.html')
-
-
-@app.route(WEBROOT + '/login_oauth')
-@logout_required
-def login_oauth():
     redirect_uri = DOMAIN + url_for('login_oauth_callback')
     sjtu = OAuth2Session(CLIENT_ID, redirect_uri=redirect_uri, scope='basic essential profile')
     authorization_url, state = sjtu.authorization_url(AUTHORIZATION_BASE_URL)
@@ -149,7 +138,7 @@ def login_oauth():
     return redirect(authorization_url)
 
 
-@app.route(WEBROOT + '/login_oauth_callback')
+@app.get(WEBROOT + '/login/oauth/callback')
 @logout_required
 def login_oauth_callback():
     code = request.args.get('code', None)
@@ -168,27 +157,68 @@ def login_oauth_callback():
 
     res = sjtu.get(PROFILE_URL).json()
     res = res['entities'][0]
-    user = {'jaccount': res['account'],
-            'name': res['name'],
-            'stuid': res['code'],}
+
+    cur = get_db().cursor()
+    cur.execute('SELECT * FROM members WHERE stuid=?', (res['code'], ))
+    row = cur.fetchone()
+    if not row:
+        flash('您不是 ACM 班的成员', 'error')
+        return redirect(url_for('homepage'))
+
+    user = {
+        'jaccount': res['account'],
+        'name': res['name'],
+        'stuid': res['code'],
+    }
+
     session['user'] = user
-    return redirect(url_for('get_ssh_key'))
+    return redirect(url_for('homepage'))
 
 
-@app.route(WEBROOT + '/logout_oauth')
-@login_required
-def logout_oauth():
-    redirect_uri = DOMAIN + url_for('logout')
-    url = '{}?client_id={}&redirect_uri={}'.format(LOGOUT_URL, CLIENT_ID, redirect_uri)
-    return redirect(url)
-
-
-@app.route(WEBROOT + '/logout')
+@app.post(WEBROOT + '/logout')
 @login_required
 def logout():
     session.clear()
     flash('已登出', 'success')
-    return redirect(url_for('homepage'))
+    url = f'{LOGOUT_URL}?client_id={CLIENT_ID}&redirect_uri={DOMAIN}{url_for("homepage")}'
+    return redirect(url)
+
+
+@app.route('/auth')
+def auth():
+    uri = request.headers['x-original-uri']
+    uri_regex = re.compile(r'^/~([a-zA-Z0-9_-]+)\.git/(.*)$')
+    match = uri_regex.match(uri)
+    if not match:
+        abort(FORBIDDEN)
+    slug = match[1]
+
+    user = session.get('user', None)
+    if user:
+        cur = get_db().cursor()
+        cur.execute('SELECT * FROM sites WHERE jaccount = ? AND slug = ?', (user['jaccount'], slug))
+        row = cur.fetchone()
+        if not row:
+            abort(FORBIDDEN)
+        return 'Authorised'
+
+    auth = request.authorization
+    if auth is None or auth.type != 'basic':
+        resp = make_response()
+        resp.status_code = UNAUTHORIZED
+        resp.headers.set('WWW-Authenticate', 'Basic realm="ACM Userpage Git Access", charset="UTF-8"')
+        abort(resp)
+
+    jaccount = auth.username
+    token = auth.password
+
+    cur = get_db().cursor()
+    cur.execute('SELECT * FROM sites WHERE jaccount = ? AND token = ? AND slug = ?', (jaccount, token, slug))
+    row = cur.fetchone()
+    if not row:
+        abort(UNAUTHORIZED)
+
+    return 'Authorised'
 
 
 if __name__ == '__main__':

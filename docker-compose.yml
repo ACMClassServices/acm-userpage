@@ -1,0 +1,15 @@
+services:
+  web:
+    build: .
+    ports:
+      - '83:83'
+    volumes:
+      - userpage:/srv/userpage
+      - type: bind
+        source: config.py
+        target: /opt/userpage/config.py
+    extra_hosts:
+      - "host-gateway.internal:host-gateway"
+
+volumes:
+  userpage:

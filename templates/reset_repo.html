@@ -1,0 +1,9 @@
+{% extends "layout.html" %}
+{% block body %}
+<div><a href="{{ url_for('homepage') }}">(- 回首页)</a></div>
+<h1>重置仓库</h1>
+<p>点击下方按钮以删除并重建 Git 仓库。</p>
+<form action="{{ url_for('do_reset_repo') }}" method="POST">
+  <button>重置仓库</button>
+</form>
+{% endblock %}
