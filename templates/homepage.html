@@ -24,7 +24,7 @@
 <h2>用户列表</h2>
 <ul>
 {% for u in known_users %}
-    <li><a href="https://acm.sjtu.edu.cn/~{{ u['slug'] }}">20{{ u['stuid'][1:3] }}级 - {{ u['name'] }}</a></li>
+    <li><a href="https://acm.sjtu.edu.cn/~{{ u['slug'] }}">20{{ u['stuid'][1:3] }} 级 - {{ u['name'] }}</a></li>
 {% endfor %}
 </ul>
 {% endblock %}

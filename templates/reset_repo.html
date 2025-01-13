@@ -3,7 +3,11 @@
 <div><a href="{{ url_for('homepage') }}">(- 回首页)</a></div>
 <h1>重置仓库</h1>
 <p>点击下方按钮以删除并重建 Git 仓库。</p>
+<p><strong>这将会删除您网站的全部内容，并无法找回。</strong></p>
+<p>确认要重置仓库吗？</p>
 <form action="{{ url_for('do_reset_repo') }}" method="POST">
+  请在此文本框中输入「确认删除」(不含引号):
+  <input name="confirm">
   <button>重置仓库</button>
 </form>
 {% endblock %}

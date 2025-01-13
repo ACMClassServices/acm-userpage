@@ -110,6 +110,10 @@ def reset_repo():
 @app.post(WEBROOT + '/repo/reset')
 @login_required
 def do_reset_repo():
+    if request.form['confirm'] != '确认删除':
+        flash('请确认删除操作', 'error')
+        return redirect(url_for('reset_repo'))
+
     jaccount = session['user']['jaccount']
     slug = get_db().execute('SELECT slug FROM sites WHERE jaccount = ?', (jaccount, )).fetchone()[0]
 
