@@ -10,9 +10,11 @@
     <li><a href="https://acm.sjtu.edu.cn/~{{ user_slug }}/.git/">查看仓库</a></li>
     <li><a href="{{ url_for('reset_repo') }}">重置仓库</a></li>
     {% endif %}
-    <li><a href="{{ url_for('logout') }}">登出 jAccount</a></li>
     <li><a href="{{ url_for('help') }}">查看帮助</a></li>
 </ul>
+<form action="{{ url_for('logout') }}" method="post">
+    <button type="submit">登出 jAccount</button>
+</form>
 {% else %}
 <h2>你好</h2>
 <ul>
